@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import random
 import datetime
 import openpyxl
-from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton
+from telebot.types import InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 import string
 
 load_dotenv()
@@ -296,8 +296,8 @@ def handle_contact(message):
     user_states[user_id]['phone_number'] = phone_number
     user_states[user_id]['phone_provided'] = True
     
-    # После получения номера телефона начинаем сбор информации пошагово
-    user_states[user_id]['current_step'] = 'parent_fio'
+    # После получения номера телефона начинаем сбор информации
+    user_states[user_id]['current_step'] = 'child_info'
     
     success_text = f"""
 ✅ **Номер телефона получен!**
@@ -305,14 +305,24 @@ def handle_contact(message):
 📋 **Статус требований:**
 🔍 Подписка на канал: ✅ Выполнено
 📱 Номер телефона: ✅ Предоставлен
-📝 Информация о родителе и ребенке: ❌ Не введена
+📝 Информация о ребенке: ❌ Не введена
 
-**Следующий шаг:** Введите ФИО родителя
+**Следующий шаг:** Введите информацию о ребенке
 
-Пожалуйста, напишите ваше полное имя (например: Иванов Иван Иванович)
+Пожалуйста, напишите одним сообщением:
+1️⃣ ФИО ребенка
+2️⃣ Класс (например: 7А)
+3️⃣ Школа
+
+Пример:
+Иванов Иван Иванович
+7А
+МБОУ СОШ №39
     """
     
-    bot.reply_to(message, success_text, parse_mode='Markdown')
+    # Удаляем клавиатуру после получения номера
+    remove_keyboard = ReplyKeyboardRemove()
+    bot.reply_to(message, success_text, parse_mode='Markdown', reply_markup=remove_keyboard)
 
 @bot.message_handler(func=lambda message: True)
 def echo_all(message):
@@ -353,55 +363,33 @@ def handle_registration_steps(message):
     
     current_step = user_states[user_id].get('current_step', 'subscription')
     
-    if current_step == 'parent_fio':
-        # Сохраняем ФИО родителя
-        user_states[user_id]['parent_fio'] = text
-        user_states[user_id]['current_step'] = 'child_school'
+    if current_step == 'child_info':
+        # Разбиваем текст на строки
+        info_lines = text.split('\n')
         
-        next_text = f"""
-✅ **ФИО родителя сохранено: {text}**
+        # Проверяем, что получили все необходимые данные
+        if len(info_lines) < 3:
+            error_text = """
+❌ **Пожалуйста, предоставьте всю информацию в правильном формате:**
 
-📋 **Статус требований:**
-🔍 Подписка на канал: ✅ Выполнено
-📱 Номер телефона: ✅ Предоставлен
-👤 ФИО родителя: ✅ Введено
-🏫 Школа ребенка: ❌ Не введена
-📚 Класс ребенка: ❌ Не введен
+1️⃣ ФИО ребенка
+2️⃣ Класс
+3️⃣ Школа
 
-**Следующий шаг:** Введите школу ребенка
-
-Пожалуйста, напишите название школы (например: МБОУ СОШ №39)
-        """
-        bot.reply_to(message, next_text, parse_mode='Markdown')
-        return True
+Пример:
+Иванов Иван Иванович
+7А
+МБОУ СОШ №39
+            """
+            bot.reply_to(message, error_text, parse_mode='Markdown')
+            return True
         
-    elif current_step == 'child_school':
-        # Сохраняем школу ребенка
-        user_states[user_id]['child_school'] = text
-        user_states[user_id]['current_step'] = 'child_class'
+        # Сохраняем информацию
+        user_states[user_id]['parent_fio'] = info_lines[0].strip()
+        user_states[user_id]['child_class'] = info_lines[1].strip()
+        user_states[user_id]['child_school'] = info_lines[2].strip()
         
-        next_text = f"""
-✅ **Школа ребенка сохранена: {text}**
-
-📋 **Статус требований:**
-🔍 Подписка на канал: ✅ Выполнено
-📱 Номер телефона: ✅ Предоставлен
-👤 ФИО родителя: ✅ Введено
-🏫 Школа ребенка: ✅ Введена
-📚 Класс ребенка: ❌ Не введен
-
-**Следующий шаг:** Введите класс ребенка
-
-Пожалуйста, напишите класс (например: 7А, 8Б, 11)
-        """
-        bot.reply_to(message, next_text, parse_mode='Markdown')
-        return True
-        
-    elif current_step == 'child_class':
-        # Сохраняем класс ребенка и завершаем регистрацию
-        user_states[user_id]['child_class'] = text
-        
-        # Все требования выполнены - генерируем код и регистрируем
+        # Генерируем код участника
         participant_code = generate_participant_code()
         
         # Сохраняем в Excel
@@ -410,7 +398,7 @@ def handle_registration_steps(message):
             user_states[user_id]['username'], 
             user_states[user_id]['parent_fio'],
             user_states[user_id]['child_school'],
-            text,  # child_class
+            user_states[user_id]['child_class'],
             user_states[user_id]['phone_number'], 
             participant_code
         ):
@@ -418,9 +406,9 @@ def handle_registration_steps(message):
 🎉 **Поздравляем! Теперь вы участник розыгрыша!**
 
 📋 **Ваши данные:**
-👤 ФИО родителя: {user_states[user_id]['parent_fio']}
-🏫 Школа ребенка: {user_states[user_id]['child_school']}
-📚 Класс ребенка: {text}
+👤 ФИО ребенка: {user_states[user_id]['parent_fio']}
+📚 Класс: {user_states[user_id]['child_class']}
+🏫 Школа: {user_states[user_id]['child_school']}
 📱 Телефон: {user_states[user_id]['phone_number']}
 🎫 **Код участника: `{participant_code}`**
 
